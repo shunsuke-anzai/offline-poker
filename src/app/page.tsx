@@ -1,4 +1,5 @@
 import type { NextPage } from 'next';
+import Link from 'next/link';
 
 const HomePage: NextPage = () => {
   return (
@@ -21,20 +22,22 @@ const HomePage: NextPage = () => {
 
         {/* ボタンコンテナ */}
         <div className="w-full flex flex-col space-y-8">
-          
-          {/* MAKE ROOM ボタン */}
-          <button 
-            className="w-full py-4 px-8 text-xl font-bold text-black bg-gold-gradient rounded-full shadow-gold transition-all duration-300 ease-in-out hover:shadow-lg hover:shadow-yellow-300/50 hover:-translate-y-1 focus:outline-none"
-          >
-            MAKE ROOM
-          </button>
-          
-          {/* SEARCH ROOM ボタン */}
-          <button 
-            className="w-full py-4 px-8 text-xl font-bold text-black bg-gold-gradient rounded-full shadow-gold transition-all duration-300 ease-in-out hover:shadow-lg hover:shadow-yellow-300/50 hover:-translate-y-1 focus:outline-none"
-          >
-            SEARCH ROOM
-          </button>
+          <Link href="/make-room">
+            {/* MAKE ROOM ボタン */}
+            <button 
+              className="w-full py-4 px-8 text-xl font-bold text-black bg-gold-gradient rounded-full shadow-gold transition-all duration-300 ease-in-out hover:shadow-lg hover:shadow-yellow-300/50 hover:-translate-y-1 focus:outline-none"
+              >
+              MAKE ROOM
+            </button>
+          </Link>
+          <Link href="/search-room">
+            {/* SEARCH ROOM ボタン */}
+            <button 
+              className="w-full py-4 px-8 text-xl font-bold text-black bg-gold-gradient rounded-full shadow-gold transition-all duration-300 ease-in-out hover:shadow-lg hover:shadow-yellow-300/50 hover:-translate-y-1 focus:outline-none"
+              >
+              SEARCH ROOM
+            </button>
+          </Link>
 
         </div>
       </div>
