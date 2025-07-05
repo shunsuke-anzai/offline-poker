@@ -2,26 +2,62 @@
 
 import Link from 'next/link';
 import { useState, type ChangeEvent, type MouseEvent } from 'react';
+import { useRouter } from 'next/navigation';
+// import { supabase } from '@/utils/supabase'; // Supabaseクライアントの直接インポートは不要になります
 
 export default function MakeRoomPage() {
-  const [name, setName] = useState<string>('');
-  const [members, setMembers] = useState<string>('2');
+  const [name, setName] = useState<string>(''); // これはプレイヤー名
+  const [members, setMembers] = useState<string>('2'); // これはmax_membersに相当
   const [stack, setStack] = useState<string>('50');
   const [bb, setBb] = useState<string>('');
   const [keyword, setKeyword] = useState<string>('');
+  const router = useRouter();
 
   const labelClasses = "text-yellow-400 text-3xl font-semibold";
   const inputBaseClasses = "bg-transparent border-2 border-yellow-400 text-yellow-400 text-center text-xl focus:outline-none focus:ring-2 focus:ring-yellow-300";
 
-  const handleMakeRoom = (event: MouseEvent<HTMLButtonElement>) => {
+  const handleMakeRoom = async (event: MouseEvent<HTMLButtonElement>) => {
     if (name.trim() === '' || bb.trim() === '' || keyword.trim() === '') {
-      alert('「NAME」「BB」「KEY WORD」は入力必須項目です。');
+      alert('「NAME」（プレイヤー名）、「BB」、「KEY WORD」は入力必須項目です。');
       return; 
     }
 
-    const roomData = { name, members, stack, bb, keyword };
-    console.log("Room Data Submitted:", roomData); 
-    alert(`ルームが作成されました！\nデータ: ${JSON.stringify(roomData, null, 2)}`);
+    // APIルートに送るデータ
+    const requestData = { 
+      playerName: name.trim(), // プレイヤー名
+      max_members: parseInt(members, 10), // max_members
+      stack: parseInt(stack, 10),
+      bb: parseInt(bb, 10),
+      keyword,
+    };
+
+    try {
+      const response = await fetch('/api/room/create', { // APIルートを呼び出す
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestData),
+      });
+
+      const result = await response.json(); // APIからのレスポンスをJSONとしてパース
+
+      if (!response.ok) { // レスポンスがエラー（status 4xx/5xx）の場合
+        throw new Error(result.message || 'ルームの作成に失敗しました。');
+      }
+
+      // 成功時の処理
+      const { roomId, playerName: createdPlayerName } = result; // APIレスポンスからroomIdとplayerNameを取得
+      console.log("Room created via API with ID:", roomId, "and initial player:", createdPlayerName);
+      alert(`ルームが作成されました！\nルームID: ${roomId}\nプレイヤー名: ${createdPlayerName}`);
+      
+      // ルームIDとプレイヤー名をクエリパラメータとして待機画面に渡す
+      router.push(`/waiting-room?roomId=${roomId}&playerName=${encodeURIComponent(createdPlayerName)}`); 
+
+    } catch (error: any) {
+      console.error('Error creating room via API:', error.message);
+      alert(`ルームの作成中にエラーが発生しました: ${error.message}`);
+    }
   };
   
   const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -51,13 +87,13 @@ export default function MakeRoomPage() {
       <form className="w-full max-w-md mx-auto flex flex-col items-center space-y-10">
 
         <div className="w-full space-y-6">
-          {/* NAME */}
+          {/* NAME (プレイヤー名) */}
           <div className="flex items-center justify-between">
             <label htmlFor="name" className={labelClasses}>NAME</label>
             <input id="name" type="text" value={name} onChange={handleInputChange} className={`${inputBaseClasses} rounded-full w-48 h-12 px-4`} />
           </div>
 
-          {/* MEMBERS */}
+          {/* MEMBERS (max_members) */}
           <div className="flex items-center justify-between">
             <label htmlFor="members" className={labelClasses}>MEMBERS</label>
             <div className="relative">

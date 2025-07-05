@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1751635017547,
+      "tag": "0000_colossal_the_hunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1751635327771,
+      "tag": "0001_elite_sugar_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1751635925725,
+      "tag": "0002_volatile_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1751636109629,
+      "tag": "0003_natural_vance_astro",
+      "breakpoints": true
+    }
+  ]
+}
