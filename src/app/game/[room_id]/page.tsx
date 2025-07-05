@@ -1,0 +1,538 @@
+'use client';
+
+import React, { useState, useMemo, useEffect } from 'react';
+
+
+// --- 型定義 ---
+export type Player = {
+  id: string;
+  name: string;
+  stack: number;
+  isBB: boolean;
+  isTurn: boolean;
+  seatIndex: number;
+  visualSeatIndex?: number;
+  // アクション機能用のプロパティ
+  hasFolded: boolean;
+  currentBet: number; // このラウンドでのベット額
+  lastAction?: string; // 最後に行ったアクション（表示用）
+};
+
+type ModalState = {
+  type: 'none' | 'bet' | 'showdown' | 'next-hand';
+  data?: any;
+};
+
+type GameStage = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+
+
+// --- 定数 ---
+const SEAT_POSITIONS: { [key: number]: string } = {
+  0: 'bottom-[1%] left-1/2 -translate-x-1/2',
+  1: 'bottom-1/3 left-2 translate-y-1/2',
+  2: 'top-1/3 left-2 -translate-y-1/2',
+  3: 'top-[1%] left-1/2 -translate-x-1/2',
+  4: 'top-1/3 right-2 -translate-y-1/2',
+  5: 'bottom-1/3 right-2 translate-y-1/2',
+};
+
+const MY_USER_ID = 'user-1';
+
+// --- ゲーム設定 ---
+const BB_SIZE = 10; // ビッグブラインドのサイズ
+
+// --- 初期データ ---
+const initialPlayersFromDB: Omit<Player, 'hasFolded' | 'currentBet' | 'lastAction' | 'isBB' | 'isTurn'>[] = [
+  { id: 'user-4', name: 'ゆうき', stack: 300, seatIndex: 0 },
+  { id: 'user-1', name: 'たけし', stack: 185, seatIndex: 2 },
+  { id: 'user-2', name: 'さやか', stack: 210, seatIndex: 3 },
+  { id: 'user-3', name: 'けんじ', stack: 150, seatIndex: 5 },
+];
+
+// --- カスタムフック ---
+const useRelativePlayerPositions = (players: Player[], myUserId: string): Player[] => {
+  return useMemo(() => {
+    const mainPlayer = players.find(p => p.id === myUserId);
+    if (!mainPlayer) return players;
+
+    const mainPlayerDbSeatIndex = mainPlayer.seatIndex;
+    const totalSeats = 6;
+
+    return players.map(player => {
+      const offset = player.seatIndex - mainPlayerDbSeatIndex;
+      const visualSeatIndex = (offset + totalSeats) % totalSeats;
+      return { ...player, visualSeatIndex };
+    });
+  }, [players, myUserId]);
+};
+
+
+// --- 子コンポーネント ---
+
+const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer: boolean }) => {
+  const turnHighlightClass = player.isTurn ? 'shadow-yellow-400 shadow-[0_0_20px]' : '';
+  const foldedClass = player.hasFolded ? 'opacity-40 grayscale' : '';
+  const boxSizeClass = isMainPlayer ? 'px-10 py-7' : 'px-4 py-2';
+  const nameSizeClass = isMainPlayer ? 'text-4xl' : 'text-lg';
+  const stackSizeClass = isMainPlayer ? 'text-4xl' : 'text-xl';
+
+  return (
+    <div className={`relative flex items-center justify-center transition-all duration-300 ${foldedClass}`}>
+      <img
+        src="/pokerstack.png"
+        alt="Poker Chip Stack"
+        className="absolute left-1/2 top-0 w-40 h-32 -translate-x-1/2 -translate-y-1/2 z-0 pointer-events-none select-none"
+        draggable={false}
+      />      
+      <div className={`relative z-10 bg-black border-2 border-yellow-400 rounded-2xl text-center shadow-lg transition-all duration-300 ${boxSizeClass} ${turnHighlightClass}`}>
+        <p className={`text-white font-bold ${nameSizeClass}`}>{player.name}</p>
+        <p className={`text-yellow-400 font-bold ${stackSizeClass}`}>{player.stack}</p>
+        {player.isBB && !player.hasFolded && (
+          <div className="absolute -top-3 -right-3 bg-red-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center border-2 border-white">BB</div>
+        )}
+        {/* アクション表示 */}
+        {player.lastAction && (
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-gray-800 text-white text-sm font-bold px-3 py-1 rounded-full border-2 border-gray-400 shadow-md">
+            {player.lastAction}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ActionButtons = ({ currentBet, onAction, player }: { currentBet: number, onAction: (action: string, amount?: number) => void, player?: Player }) => {
+  const hasBet = currentBet > 0;
+  
+  // BBが最初のベッターで、他にレイズがない場合はcheckが可能
+  const isBBWithNoRaise = player?.isBB && player?.currentBet === currentBet && currentBet > 0;
+  
+  return (
+    <div className="flex justify-center gap-3 w-full px-4 max-w-md mt-2">
+      <button onClick={() => onAction('fold')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Fold</button>
+      {hasBet ? (
+        <>
+          {isBBWithNoRaise ? (
+            <button onClick={() => onAction('check')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Check</button>
+          ) : (
+            <button onClick={() => onAction('call')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Call</button>
+          )}
+          <button onClick={() => onAction('raise')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Raise</button>
+        </>
+      ) : (
+        <>
+          <button onClick={() => onAction('check')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Check</button>
+          <button onClick={() => onAction('bet')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Bet</button>
+        </>
+      )}
+    </div>
+  );
+};
+
+const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }: { modalState: ModalState, setModal: (state: ModalState) => void, onSubmitBet: (amount: number) => void, onSelectWinner: (winnerId: string) => void, onNextHand: () => void }) => {
+  const [betAmount, setBetAmount] = useState('');
+
+  if (modalState.type === 'none') return null;
+
+  const handleBetSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseInt(betAmount, 10);
+    if (!isNaN(amount) && amount > 0) {
+      onSubmitBet(amount);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-yellow-500 text-white w-full max-w-sm">
+        {modalState.type === 'bet' && (
+          <form onSubmit={handleBetSubmit}>
+            <h2 className="text-2xl font-bold text-center mb-4">ベット額を入力</h2>
+            <input
+              type="number"
+              value={betAmount}
+              onChange={(e) => setBetAmount(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 text-center text-2xl"
+              autoFocus
+            />
+            <div className="flex gap-4 mt-6">
+              <button type="button" onClick={() => setModal({ type: 'none' })} className="bg-gray-600 hover:bg-gray-700 w-full font-bold py-2 px-4 rounded-lg">キャンセル</button>
+              <button type="submit" className="bg-red-600 hover:bg-red-700 w-full font-bold py-2 px-4 rounded-lg">決定</button>
+            </div>
+          </form>
+        )}
+        {modalState.type === 'showdown' && (
+          <div>
+            <h2 className="text-2xl font-bold text-center mb-4">勝者は誰ですか？</h2>
+            <div className="space-y-3">
+              {modalState.data.players.map((p: Player) => (
+                <button key={p.id} onClick={() => onSelectWinner(p.id)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                  {p.name}
+                </button>
+              ))}
+            </div>
+             <button onClick={() => setModal({ type: 'none' })} className="bg-gray-600 hover:bg-gray-700 w-full font-bold py-2 px-4 rounded-lg mt-6">キャンセル</button>
+          </div>
+        )}
+        {modalState.type === 'next-hand' && (
+          <div>
+            <h2 className="text-2xl font-bold text-center mb-4">ハンド終了</h2>
+            <p className="text-center mb-6">次のハンドを開始します</p>
+            <button onClick={onNextHand} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg">
+              次のハンドを開始
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
+// --- メインコンポーネント (ページ) ---
+export default function PokerGamePage() {
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [pot, setPot] = useState(0);
+  const [currentBet, setCurrentBet] = useState(0);
+  const [modalState, setModalState] = useState<ModalState>({ type: 'none' });
+  const [gameStage, setGameStage] = useState<GameStage>('preflop');
+  const [lastRaiserIndex, setLastRaiserIndex] = useState<number>(-1); // 最後にレイズ/ベットしたプレイヤーのインデックス
+  const [bbSeatIndex, setBbSeatIndex] = useState<number>(5); // 現在のBBの席番号
+  const [currentUserId, setCurrentUserId] = useState<string>(MY_USER_ID); // テスト用のユーザーID
+
+  // ゲーム開始時にプレイヤーの状態を初期化
+  useEffect(() => {
+    startNewHand();
+  }, []);
+
+  const startNewHand = () => {
+    setPot(0);
+    setCurrentBet(BB_SIZE);
+    setGameStage('preflop');
+    setLastRaiserIndex(-1);
+    
+    const newPlayers = initialPlayersFromDB.map(p => {
+      const isCurrentBB = p.seatIndex === bbSeatIndex;
+      
+      if (isCurrentBB) {
+        // BBプレイヤーは最初からBBサイズをベット
+        return {
+          ...p,
+          isBB: true,
+          hasFolded: false,
+          currentBet: BB_SIZE,
+          lastAction: `BET ${BB_SIZE}`,
+          stack: p.stack - BB_SIZE,
+          isTurn: false, // 最初はBBの左隣からスタート
+        };
+      } else {
+        return {
+          ...p,
+          isBB: false,
+          hasFolded: false,
+          currentBet: 0,
+          lastAction: undefined,
+          isTurn: false,
+        };
+      }
+    });
+    
+    // BBの左隣のプレイヤーを見つけてターンを設定
+    const bbPlayerIndex = newPlayers.findIndex(p => p.seatIndex === bbSeatIndex);
+    let firstPlayerIndex = (bbPlayerIndex + 1) % newPlayers.length;
+    
+    // BBの左隣のプレイヤーにターンを設定
+    newPlayers[firstPlayerIndex].isTurn = true;
+    
+    setPlayers(newPlayers);
+    
+    // BBプレイヤーのインデックスを記録（最初のベッター）
+    setLastRaiserIndex(bbPlayerIndex);
+  };
+
+  const getStageDisplayName = (stage: GameStage): string => {
+    switch (stage) {
+      case 'preflop': return 'PREFLOP';
+      case 'flop': return 'FLOP';
+      case 'turn': return 'TURN';
+      case 'river': return 'RIVER';
+      case 'showdown': return 'SHOWDOWN';
+      default: return 'PREFLOP';
+    }
+  };
+
+  const handleNextTurn = (currentPlayerIndex: number) => {
+    // アクティブなプレイヤー（フォールドしていない）のリスト
+    const activePlayers = players.filter(p => !p.hasFolded);
+    
+    // 1人以下になった場合はハンド終了
+    if (activePlayers.length <= 1) {
+      const winner = activePlayers[0];
+      const finalPot = pot + players.reduce((sum, p) => sum + p.currentBet, 0);
+      setPot(finalPot);
+      setPlayers(players.map(p => ({...p, currentBet: 0})));
+      setTimeout(() => {
+        alert(`${winner.name}が${finalPot}を獲得しました！`);
+        setModalState({ type: 'next-hand' });
+      }, 500);
+      return;
+    }
+
+    // 次のプレイヤーを探す
+    let nextPlayerIndex = (currentPlayerIndex + 1) % players.length;
+    while (players[nextPlayerIndex].hasFolded) {
+      nextPlayerIndex = (nextPlayerIndex + 1) % players.length;
+    }
+
+    // ベッティングラウンドが完了したかチェック
+    const hasAnyBet = currentBet > 0;
+    const allPlayersActed = activePlayers.every(p => p.lastAction !== undefined);
+    
+    let roundComplete = false;
+    
+    if (!hasAnyBet) {
+      // ベットがない場合：全員がチェックしたら終了
+      roundComplete = allPlayersActed && activePlayers.every(p => p.lastAction === 'CHECK');
+    } else {
+      // ベットがある場合の終了条件
+      if (gameStage === 'preflop') {
+        // プリフロップの特別ルール：BBが最後にアクションする権利を持つ
+        const bbPlayer = activePlayers.find(p => p.isBB);
+        if (bbPlayer && bbPlayer.lastAction) {
+          // BBがアクションした場合
+          if (lastRaiserIndex === -1) {
+            // 誰もレイズしていない場合：BBがcheckかcallしたらラウンド終了
+            roundComplete = (bbPlayer.lastAction === 'CHECK' || bbPlayer.lastAction.startsWith('CALL')) && allPlayersActed;
+          } else {
+            // 誰かがレイズした場合：最後にレイズした人の手前のプレイヤーまで
+            let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
+            while (players[playerBeforeRaiserIndex].hasFolded) {
+              playerBeforeRaiserIndex = (playerBeforeRaiserIndex - 1 + players.length) % players.length;
+            }
+            roundComplete = currentPlayerIndex === playerBeforeRaiserIndex && activePlayers.every(p => p.currentBet === currentBet) && allPlayersActed;
+          }
+        }
+      } else {
+        // フロップ以降：最後にbet/raiseした人の手前のプレイヤーのアクション後に終了
+        if (lastRaiserIndex !== -1) {
+          const allCalledOrFolded = activePlayers.every(p => p.currentBet === currentBet);
+          
+          let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
+          while (players[playerBeforeRaiserIndex].hasFolded) {
+            playerBeforeRaiserIndex = (playerBeforeRaiserIndex - 1 + players.length) % players.length;
+          }
+          
+          roundComplete = currentPlayerIndex === playerBeforeRaiserIndex && allCalledOrFolded && allPlayersActed;
+        }
+      }
+    }
+
+    if (roundComplete) {
+      // ベッティングラウンド終了
+      const newPot = pot + players.reduce((sum, p) => sum + p.currentBet, 0);
+      setPot(newPot);
+      setPlayers(prevPlayers => prevPlayers.map(p => ({...p, currentBet: 0, lastAction: undefined, isTurn: false})));
+      setCurrentBet(0);
+      setLastRaiserIndex(-1);
+      
+      // 次のステージに進む
+      const nextStage = getNextStage(gameStage);
+      if (nextStage === 'showdown') {
+        setGameStage(nextStage);
+        setTimeout(() => {
+          setModalState({ type: 'showdown', data: { players: activePlayers } });
+        }, 500);
+      } else {
+        setGameStage(nextStage);
+        
+        // 新しいラウンドでは最初のアクティブプレイヤー（席順で最も若い番号）からスタート
+        setTimeout(() => {
+          setPlayers(prevPlayers => {
+            const newPlayers = [...prevPlayers];
+            
+            // フロップ以降はBBから開始
+            const bbPlayer = activePlayers.find(p => p.isBB);
+            if (bbPlayer) {
+              const bbPlayerIndex = newPlayers.findIndex(p => p.id === bbPlayer.id);
+              newPlayers[bbPlayerIndex].isTurn = true;
+            } else {
+              // BBがフォールドしている場合は席順で最も若い番号から
+              const activePlayersSorted = activePlayers.sort((a, b) => a.seatIndex - b.seatIndex);
+              const firstActivePlayerIndex = newPlayers.findIndex(p => p.id === activePlayersSorted[0].id);
+              newPlayers[firstActivePlayerIndex].isTurn = true;
+            }
+            
+            return newPlayers;
+          });
+        }, 100);
+        
+        alert(`${getStageDisplayName(nextStage)}に進みます！`);
+      }
+      return;
+    }
+    
+    setPlayers(currentPlayers => currentPlayers.map((p, index) => ({
+      ...p,
+      isTurn: index === nextPlayerIndex
+    })));
+  };
+
+  const getNextStage = (currentStage: GameStage): GameStage => {
+    switch (currentStage) {
+      case 'preflop': return 'flop';
+      case 'flop': return 'turn';
+      case 'turn': return 'river';
+      case 'river': return 'showdown';
+      default: return 'showdown';
+    }
+  };
+
+  const handleAction = (action: string, amount?: number) => {
+    const currentPlayerIndex = players.findIndex(p => p.isTurn);
+    if (currentPlayerIndex === -1) return;
+    const currentPlayer = players[currentPlayerIndex];
+
+    let newPlayers = [...players];
+    let newCurrentBet = currentBet;
+    let newLastRaiserIndex = lastRaiserIndex;
+
+    switch (action) {
+      case 'fold':
+        newPlayers[currentPlayerIndex] = { 
+          ...currentPlayer, 
+          hasFolded: true, 
+          isTurn: false,
+          lastAction: 'FOLDED'
+        };
+        break;
+      case 'check':
+        newPlayers[currentPlayerIndex] = {
+          ...currentPlayer,
+          lastAction: 'CHECK'
+        };
+        break;
+      case 'call':
+        const callAmount = currentBet - currentPlayer.currentBet;
+        newPlayers[currentPlayerIndex] = {
+          ...currentPlayer,
+          stack: currentPlayer.stack - callAmount,
+          currentBet: currentBet,
+          lastAction: `CALL ${currentBet}` // 最終的に支払った総額を表示
+        };
+        break;
+      case 'bet':
+      case 'raise':
+        if (amount === undefined) {
+            setModalState({ type: 'bet' });
+            return; // モーダル表示のため、ここで処理を中断
+        }
+        const betAmount = amount;
+        newCurrentBet = betAmount;
+        newLastRaiserIndex = currentPlayerIndex; // ベット/レイズしたプレイヤーを記録
+        newPlayers[currentPlayerIndex] = {
+          ...currentPlayer,
+          stack: currentPlayer.stack - betAmount,
+          currentBet: betAmount,
+          lastAction: action === 'bet' ? `BET ${betAmount}` : `RAISE ${betAmount}`
+        };
+        break;
+    }
+    
+    setPlayers(newPlayers);
+    setCurrentBet(newCurrentBet);
+    setLastRaiserIndex(newLastRaiserIndex);
+    handleNextTurn(currentPlayerIndex);
+  };
+
+  const handleSubmitBet = (amount: number) => {
+    setModalState({ type: 'none' });
+    handleAction(currentBet > 0 ? 'raise' : 'bet', amount);
+  };
+  
+  const handleWinnerSelected = (winnerId: string) => {
+    setModalState({ type: 'none' });
+    const winner = players.find(p => p.id === winnerId);
+    if (winner) {
+        alert(`${winner.name}が${pot}を獲得しました！`);
+        // 勝者にポットを追加するロジックは省略（DBで行う想定）
+    }
+    setModalState({ type: 'next-hand' });
+  };
+
+  const handleNextHand = () => {
+    setModalState({ type: 'none' });
+    
+    // BBを左隣の席に移動
+    const currentBbPlayer = players.find(p => p.isBB);
+    if (currentBbPlayer) {
+      // 席順序でソートして次のBBを見つける
+      const sortedSeats = initialPlayersFromDB.map(p => p.seatIndex).sort((a, b) => a - b);
+      const currentBbSeatIndex = currentBbPlayer.seatIndex;
+      const currentIndex = sortedSeats.indexOf(currentBbSeatIndex);
+      const nextIndex = (currentIndex + 1) % sortedSeats.length;
+      const nextBbSeatIndex = sortedSeats[nextIndex];
+      
+      setBbSeatIndex(nextBbSeatIndex);
+    }
+    
+    startNewHand();
+  };
+
+  const positionedPlayers = useRelativePlayerPositions(players, currentUserId);
+  const mainPlayer = positionedPlayers.find(p => p.id === currentUserId);
+
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-black p-4">
+      <Modal modalState={modalState} setModal={setModalState} onSubmitBet={handleSubmitBet} onSelectWinner={handleWinnerSelected} onNextHand={handleNextHand} />
+      
+      {/* テスト用ユーザー切り替えボタン */}
+      <div className="absolute top-4 left-4 z-50">
+        <div className="bg-gray-800 p-3 rounded-lg border border-yellow-500">
+          <p className="text-white text-sm mb-2">テスト用ユーザー切り替え</p>
+          <div className="flex gap-2">
+            {initialPlayersFromDB.map(player => (
+              <button
+                key={player.id}
+                onClick={() => setCurrentUserId(player.id)}
+                className={`px-3 py-1 rounded text-xs font-bold transition-colors ${
+                  currentUserId === player.id 
+                    ? 'bg-yellow-500 text-black' 
+                    : 'bg-gray-600 text-white hover:bg-gray-500'
+                }`}
+              >
+                {player.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      
+      <div className="relative w-full max-w-[600px] h-[85vh] bg-transparent">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[85%] aspect-[1/1.8] border-4 border-yellow-500 rounded-full shadow-[0_0_20px_rgba(250,204,21,0.4)]"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[78%] aspect-[1/1.8] border-2 border-yellow-400 rounded-full bg-black/80"></div>
+
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 text-center">
+            <p className="text-white text-lg font-bold mb-1">{getStageDisplayName(gameStage)}</p>
+            <p className="text-white text-xl font-bold">POT</p>
+            <p className="text-yellow-400 text-4xl font-bold drop-shadow">{pot}</p>
+        </div>
+
+        {positionedPlayers.map(player => {
+          if (player.visualSeatIndex === undefined) return null;
+          const positionClass = SEAT_POSITIONS[player.visualSeatIndex];
+          return (
+            <div key={player.id} className={`absolute ${positionClass}`}>
+              <PlayerDisplay player={player} isMainPlayer={player.id === currentUserId} />
+            </div>
+          );
+        })}
+
+        {mainPlayer?.isTurn && (
+          <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-4">
+            <ActionButtons currentBet={currentBet} onAction={handleAction} player={mainPlayer} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
