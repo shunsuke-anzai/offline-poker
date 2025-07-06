@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, type ChangeEvent } from 'react';
+import { useState, useEffect, type ChangeEvent, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/utils/supabase';
@@ -18,7 +18,7 @@ interface Room {
   created_at: string;
 }
 
-export default function WaitingRoomPage() {
+function WaitingRoomContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = searchParams.get('roomId');
@@ -203,5 +203,23 @@ export default function WaitingRoomPage() {
         </Link>
       </div>
     </main>
+  );
+}
+
+// ローディングコンポーネント
+function LoadingFallback() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-black p-4 font-cinzel">
+      <p className="text-yellow-400 text-3xl font-semibold">ページを読み込み中...</p>
+    </main>
+  );
+}
+
+// メインのエクスポートコンポーネント
+export default function WaitingRoomPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <WaitingRoomContent />
+    </Suspense>
   );
 }
