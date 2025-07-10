@@ -134,8 +134,14 @@ const ActionButtons = ({ currentBet, onAction, player }: { currentBet: number, o
   );
 };
 
-const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }: { modalState: ModalState, setModal: (state: ModalState) => void, onSubmitBet: (amount: number) => void, onSelectWinner: (winnerId: string) => void, onNextHand: () => void }) => {
+const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }: { modalState: ModalState, setModal: (state: ModalState) => void, onSubmitBet: (amount: number) => void, onSelectWinner: (winnerIds: string[]) => void, onNextHand: () => void }) => {
   const [betAmount, setBetAmount] = useState('');
+  const [selectedWinners, setSelectedWinners] = useState<string[]>([]);
+
+  useEffect(() => {
+    // ショーダウンモーダルが開くたびにリセット
+    if (modalState.type === 'showdown') setSelectedWinners([]);
+  }, [modalState.type]);
 
   if (modalState.type === 'none') return null;
 
@@ -144,6 +150,17 @@ const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }
     const amount = parseInt(betAmount, 10);
     if (!isNaN(amount) && amount > 0) {
       onSubmitBet(amount);
+    }
+  };
+
+  const handleWinnerToggle = (id: string) => {
+    setSelectedWinners(prev => prev.includes(id) ? prev.filter(w => w !== id) : [...prev, id]);
+  };
+
+  const handleWinnersOk = () => {
+    if (selectedWinners.length > 0) {
+      onSelectWinner(selectedWinners);
+      setSelectedWinners([]);
     }
   };
 
@@ -168,15 +185,27 @@ const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }
         )}
         {modalState.type === 'showdown' && (
           <div>
-            <h2 className="text-2xl font-bold text-center mb-4">勝者は誰ですか？</h2>
-            <div className="space-y-3">
+            <h2 className="text-2xl font-bold text-center mb-4">勝者を選択（複数可）</h2>
+            <div className="space-y-3 mb-4">
               {modalState.data.players.map((p: Player) => (
-                <button key={p.id} onClick={() => onSelectWinner(p.id)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleWinnerToggle(p.id)}
+                  className={`w-full font-bold py-3 px-4 rounded-lg border-2 transition-colors \
+                    ${selectedWinners.includes(p.id) ? 'bg-yellow-400 text-black border-yellow-500' : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-800'}`}
+                >
                   {p.name}
                 </button>
               ))}
             </div>
-             <button onClick={() => setModal({ type: 'none' })} className="bg-gray-600 hover:bg-gray-700 w-full font-bold py-2 px-4 rounded-lg mt-6">キャンセル</button>
+            <button
+              onClick={handleWinnersOk}
+              disabled={selectedWinners.length === 0}
+              className={`w-full font-bold py-3 px-4 rounded-lg mt-2 \
+                ${selectedWinners.length === 0 ? 'bg-gray-500 text-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
+            >OK</button>
+            <button onClick={() => setModal({ type: 'none' })} className="bg-gray-600 hover:bg-gray-700 w-full font-bold py-2 px-4 rounded-lg mt-4">キャンセル</button>
           </div>
         )}
         {modalState.type === 'next-hand' && (
@@ -319,14 +348,12 @@ export default function PokerGamePage() {
     } else {
       // ベットがある場合の終了条件
       if (gameStage === 'preflop') {
-        // プリフロップの特別ルール：BBが最後にアクションする権利を持つ
         const bbPlayer = activePlayers.find(p => p.isBB);
         if (bbPlayer && bbPlayer.lastAction) {
-          // BBがアクションした場合
           if (lastRaiserIndex === -1) {
-            // 誰もレイズしていない場合：BBがcheckかcallしたらラウンド終了
-            roundComplete = (bbPlayer.lastAction === 'CHECK' || bbPlayer.lastAction.startsWith('CALL')) && allPlayersActed;
-            console.log("--- Round Complete Check : ", roundComplete); 
+            // 誰もレイズしていない場合：BBがcheckしたらラウンド終了
+            roundComplete = (bbPlayer.lastAction === 'CHECK') && allPlayersActed;
+            console.log("--- Round Complete Check : ", roundComplete);
           } else {
             // 誰かがレイズした場合：最後にレイズした人の手前のプレイヤーまで
             let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
@@ -338,10 +365,8 @@ export default function PokerGamePage() {
         }
       } else {
         // フロップ以降：最後にbet/raiseした人の手前のプレイヤーのアクション後に終了
-        const bbPlayer = activePlayers.find(p => p.isBB);
-        const bbPlayerIndex = bbPlayer ? players.findIndex(p => p.id === bbPlayer.id) : -1;
-        
-        if (lastRaiserIndex !== -1 && lastRaiserIndex !== bbPlayerIndex) {
+       
+        if (lastRaiserIndex !== -1) {
           // 誰かが実際にbet/raiseした場合（BBの初期bet以外）
           const allCalledOrFolded = activePlayers.every(p => p.currentBet === currentBet);
           
@@ -479,13 +504,38 @@ export default function PokerGamePage() {
     handleAction(currentBet > 0 ? 'raise' : 'bet', amount);
   };
   
-  const handleWinnerSelected = (winnerId: string) => {
+  const handleWinnerSelected = (winnerIds: string[]) => {
     setModalState({ type: 'none' });
-    const winner = players.find(p => p.id === winnerId);
-    if (winner) {
-        alert(`${winner.name}が${pot}を獲得しました！`);
-        // 勝者にポットを追加するロジックは省略（DBで行う想定）
+    if (!winnerIds || winnerIds.length === 0) return;
+    const winners = players.filter(p => winnerIds.includes(p.id));
+    if (winners.length === 0) return;
+    const share = Math.floor(pot / winners.length);
+    let remainder = pot % winners.length;
+    // BBの左隣から順に端数を配る
+    const bbPlayer = players.find(p => p.isBB);
+    let order: Player[] = [];
+    if (bbPlayer) {
+      let idx = players.findIndex(p => p.id === bbPlayer.id);
+      for (let i = 1; i <= players.length; i++) {
+        const nextIdx = (idx + i) % players.length;
+        order.push(players[nextIdx]);
+      }
+    } else {
+      order = [...players];
     }
+    // 勝者の中で順番を決める
+    const winnerOrder = order.filter(p => winnerIds.includes(p.id));
+    let resultMsg = '';
+    winners.forEach(w => {
+      let extra = 0;
+      if (remainder > 0 && winnerOrder.length > 0 && w.id === winnerOrder[0].id) {
+        extra = 1;
+        remainder--;
+        winnerOrder.shift();
+      }
+      resultMsg += `${w.name}：${share + extra}\n`;
+    });
+    alert(`POT分配\n${resultMsg}`);
     setModalState({ type: 'next-hand' });
   };
 
