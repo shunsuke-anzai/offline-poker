@@ -92,7 +92,10 @@ const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer:
         )}
         {/* アクション表示 */}
         {player.lastAction && (
-          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-gray-800 text-white text-sm font-bold px-3 py-1 rounded-full border-2 border-gray-400 shadow-md">
+          <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-gray-800 \
+            font-bold px-3 py-1 rounded-full border-2 border-gray-400 shadow-md \
+            ${player.lastAction.startsWith('RAISE') || player.lastAction.startsWith('BET') ? 'text-red-400' : player.lastAction.startsWith('CALL') ? 'text-gray-400' : 'text-white'} \
+            text-sm`}>
             {player.lastAction}
           </div>
         )}
@@ -109,7 +112,9 @@ const ActionButtons = ({ currentBet, onAction, player }: { currentBet: number, o
   
   return (
     <div className="flex justify-center gap-3 w-full px-4 max-w-md mt-2">
-      <button onClick={() => onAction('fold')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Fold</button>
+      {hasBet && (
+        <button onClick={() => onAction('fold')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Fold</button>
+      )}
       {hasBet ? (
         <>
           {isBBWithNoRaise ? (
@@ -199,11 +204,20 @@ export default function PokerGamePage() {
   const [lastRaiserIndex, setLastRaiserIndex] = useState<number>(-1); // 最後にレイズ/ベットしたプレイヤーのインデックス
   const [bbSeatIndex, setBbSeatIndex] = useState<number>(5); // 現在のBBの席番号
   const [currentUserId, setCurrentUserId] = useState<string>(MY_USER_ID); // テスト用のユーザーID
+  const [pendingNextTurnIndex, setPendingNextTurnIndex] = useState<number|null>(null);
 
   // ゲーム開始時にプレイヤーの状態を初期化
   useEffect(() => {
     startNewHand();
   }, []);
+
+  useEffect(() => {
+    if (pendingNextTurnIndex !== null) {
+      handleNextTurn(pendingNextTurnIndex);
+      setPendingNextTurnIndex(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players]);
 
   const startNewHand = () => {
     setPot(0);
@@ -247,7 +261,7 @@ export default function PokerGamePage() {
     setPlayers(newPlayers);
     
     // BBプレイヤーのインデックスを記録（最初のベッター）
-    setLastRaiserIndex(bbPlayerIndex);
+    //setLastRaiserIndex(bbPlayerIndex);
   };
 
   const getStageDisplayName = (stage: GameStage): string => {
@@ -288,6 +302,15 @@ export default function PokerGamePage() {
     const hasAnyBet = currentBet > 0;
     const allPlayersActed = activePlayers.every(p => p.lastAction !== undefined);
     
+    // デバッグ用ログ
+    console.log('--- Round Check ---');
+    console.log('gameStage:', gameStage);
+    console.log('currentBet:', currentBet);
+    console.log('hasAnyBet:', hasAnyBet);
+    console.log('lastRaiserIndex:', lastRaiserIndex);
+    console.log('allPlayersActed:', allPlayersActed);
+    console.log('activePlayers actions:', activePlayers.map(p => ({ name: p.name, lastAction: p.lastAction })));
+    
     let roundComplete = false;
     
     if (!hasAnyBet) {
@@ -303,6 +326,7 @@ export default function PokerGamePage() {
           if (lastRaiserIndex === -1) {
             // 誰もレイズしていない場合：BBがcheckかcallしたらラウンド終了
             roundComplete = (bbPlayer.lastAction === 'CHECK' || bbPlayer.lastAction.startsWith('CALL')) && allPlayersActed;
+            console.log("--- Round Complete Check : ", roundComplete); 
           } else {
             // 誰かがレイズした場合：最後にレイズした人の手前のプレイヤーまで
             let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
@@ -314,7 +338,11 @@ export default function PokerGamePage() {
         }
       } else {
         // フロップ以降：最後にbet/raiseした人の手前のプレイヤーのアクション後に終了
-        if (lastRaiserIndex !== -1) {
+        const bbPlayer = activePlayers.find(p => p.isBB);
+        const bbPlayerIndex = bbPlayer ? players.findIndex(p => p.id === bbPlayer.id) : -1;
+        
+        if (lastRaiserIndex !== -1 && lastRaiserIndex !== bbPlayerIndex) {
+          // 誰かが実際にbet/raiseした場合（BBの初期bet以外）
           const allCalledOrFolded = activePlayers.every(p => p.currentBet === currentBet);
           
           let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
@@ -322,7 +350,10 @@ export default function PokerGamePage() {
             playerBeforeRaiserIndex = (playerBeforeRaiserIndex - 1 + players.length) % players.length;
           }
           
-          roundComplete = currentPlayerIndex === playerBeforeRaiserIndex && allCalledOrFolded && allPlayersActed;
+          roundComplete = currentPlayerIndex === playerBeforeRaiserIndex && allCalledOrFolded && allPlayersActed; 
+        } else {
+          // 誰もbet/raiseしていない場合（全員チェック）
+          roundComplete = allPlayersActed && activePlayers.every(p => p.lastAction === 'CHECK');
         }
       }
     }
@@ -408,7 +439,7 @@ export default function PokerGamePage() {
       case 'check':
         newPlayers[currentPlayerIndex] = {
           ...currentPlayer,
-          lastAction: 'CHECK'
+          lastAction: 'CHECK',
         };
         break;
       case 'call':
@@ -437,11 +468,10 @@ export default function PokerGamePage() {
         };
         break;
     }
-    
     setPlayers(newPlayers);
     setCurrentBet(newCurrentBet);
     setLastRaiserIndex(newLastRaiserIndex);
-    handleNextTurn(currentPlayerIndex);
+    setPendingNextTurnIndex(currentPlayerIndex); // ここでフラグをセット
   };
 
   const handleSubmitBet = (amount: number) => {
@@ -513,7 +543,7 @@ export default function PokerGamePage() {
 
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 text-center">
             <p className="text-white text-lg font-bold mb-1">{getStageDisplayName(gameStage)}</p>
-            <p className="text-white text-xl font-bold">POT</p>
+            <p className="text-yellow-400 text-xl font-bold">POT</p>
             <p className="text-yellow-400 text-4xl font-bold drop-shadow">{pot}</p>
         </div>
 
