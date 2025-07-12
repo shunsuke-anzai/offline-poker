@@ -16,6 +16,7 @@ export type Player = {
   hasFolded: boolean;
   currentBet: number; // このラウンドでのベット額
   lastAction?: string; // 最後に行ったアクション（表示用）
+  isAllIn?: boolean; // ALL-IN状態かどうか
 };
 
 type ModalState = {
@@ -75,6 +76,7 @@ const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer:
   const boxSizeClass = isMainPlayer ? 'px-10 py-7' : 'px-4 py-2';
   const nameSizeClass = isMainPlayer ? 'text-4xl' : 'text-lg';
   const stackSizeClass = isMainPlayer ? 'text-4xl' : 'text-xl';
+  const borderClass = player.isAllIn ? 'border-red-600' : 'border-yellow-400';
 
   return (
     <div className={`relative flex items-center justify-center transition-all duration-300 ${foldedClass}`}>
@@ -84,7 +86,7 @@ const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer:
         className="absolute left-1/2 top-0 w-40 h-32 -translate-x-1/2 -translate-y-1/2 z-0 pointer-events-none select-none"
         draggable={false}
       />      
-      <div className={`relative z-10 bg-black border-2 border-yellow-400 rounded-2xl text-center shadow-lg transition-all duration-300 ${boxSizeClass} ${turnHighlightClass}`}>
+      <div className={`relative z-10 bg-black border-2 ${borderClass} rounded-2xl text-center shadow-lg transition-all duration-300 ${boxSizeClass} ${turnHighlightClass}`}>
         <p className={`text-white font-bold ${nameSizeClass}`}>{player.name}</p>
         <p className={`text-yellow-400 font-bold ${stackSizeClass}`}>{player.stack}</p>
         {player.isBB && !player.hasFolded && (
@@ -94,7 +96,7 @@ const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer:
         {player.lastAction && (
           <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-gray-800 \
             font-bold px-3 py-1 rounded-full border-2 border-gray-400 shadow-md \
-            ${player.lastAction.startsWith('RAISE') || player.lastAction.startsWith('BET') ? 'text-red-400' : player.lastAction.startsWith('CALL') ? 'text-gray-400' : 'text-white'} \
+            ${player.lastAction.startsWith('RAISE') || player.lastAction.startsWith('BET') ? 'text-red-400' : player.lastAction.startsWith('CALL') ? 'text-white' : player.lastAction.startsWith('ALL-IN') ? 'text-red-400' : 'text-white'} \
             text-sm`}>
             {player.lastAction}
           </div>
@@ -105,11 +107,22 @@ const PlayerDisplay = ({ player, isMainPlayer }: { player: Player, isMainPlayer:
 };
 
 const ActionButtons = ({ currentBet, onAction, player }: { currentBet: number, onAction: (action: string, amount?: number) => void, player?: Player }) => {
+  if (!player || player.isAllIn) return null; // オールイン者はアクション不可
+
   const hasBet = currentBet > 0;
-  
-  // BBが最初のベッターで、他にレイズがない場合はcheckが可能
   const isBBWithNoRaise = player?.isBB && player?.currentBet === currentBet && currentBet > 0;
-  
+  const callAmount = player ? currentBet - player.currentBet : 0;
+  const isAllInSituation = player && hasBet && callAmount >= player.stack;
+
+  if (isAllInSituation) {
+    return (
+      <div className="flex justify-center gap-3 w-full px-4 max-w-md mt-2">
+        <button onClick={() => onAction('fold')} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">Fold</button>
+        <button onClick={() => onAction('allin')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg flex-1 transition-transform transform hover:scale-105">ALL-IN</button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex justify-center gap-3 w-full px-4 max-w-md mt-2">
       {hasBet && (
@@ -169,7 +182,7 @@ const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }
       <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl border border-yellow-500 text-white w-full max-w-sm">
         {modalState.type === 'bet' && (
           <form onSubmit={handleBetSubmit}>
-            <h2 className="text-2xl font-bold text-center mb-4">ベット額を入力</h2>
+            <h2 className="text-2xl font-bold text-center mb-4">INPUT YOUR BETTING</h2>
             <input
               type="number"
               value={betAmount}
@@ -185,9 +198,9 @@ const Modal = ({ modalState, setModal, onSubmitBet, onSelectWinner, onNextHand }
         )}
         {modalState.type === 'showdown' && (
           <div>
-            <h2 className="text-2xl font-bold text-center mb-4">勝者を選択（複数可）</h2>
+            <h2 className="text-2xl font-bold text-center mb-4">WHO IS WINNER ?</h2>
             <div className="space-y-3 mb-4">
-              {modalState.data.players.map((p: Player) => (
+              {modalState.data.players.filter((p: Player) => !p.hasFolded).map((p: Player) => (
                 <button
                   key={p.id}
                   type="button"
@@ -305,12 +318,26 @@ export default function PokerGamePage() {
   };
 
   const handleNextTurn = (currentPlayerIndex: number) => {
-    // アクティブなプレイヤー（フォールドしていない）のリスト
-    const activePlayers = players.filter(p => !p.hasFolded);
+    // アクティブなプレイヤー（フォールド・ALL-INしていない）のリスト
+    const activePlayers = players.filter(p => !p.hasFolded && !p.isAllIn);
+    const showdownCandidates = players.filter(p => !p.hasFolded); // 勝者選択用
+    const hasAllIn = players.some(p => p.isAllIn);
     
-    // 1人以下になった場合はハンド終了
+    // --- 修正: アクティブプレイヤーが1人かつALL-IN者がいる場合はショーダウンへ ---
+    if (activePlayers.length <= 1 && hasAllIn && showdownCandidates.length > 1) {
+      // 現在のベットをPOTに加算
+      const finalPot = pot + players.reduce((sum, p) => sum + p.currentBet, 0);
+      setPot(finalPot);
+      setPlayers(players.map(p => ({...p, currentBet: 0})));
+      setGameStage('showdown');
+      setTimeout(() => {
+        setModalState({ type: 'showdown', data: { players: showdownCandidates } });
+      }, 500);
+      return;
+    }
+    // --- 既存: アクティブプレイヤーが1人だけの場合は即勝利 ---
     if (activePlayers.length <= 1) {
-      const winner = activePlayers[0];
+      const winner = activePlayers[0] || showdownCandidates[0];
       const finalPot = pot + players.reduce((sum, p) => sum + p.currentBet, 0);
       setPot(finalPot);
       setPlayers(players.map(p => ({...p, currentBet: 0})));
@@ -323,12 +350,14 @@ export default function PokerGamePage() {
 
     // 次のプレイヤーを探す
     let nextPlayerIndex = (currentPlayerIndex + 1) % players.length;
-    while (players[nextPlayerIndex].hasFolded) {
+    // フォールドまたはALL-INしているプレイヤーはスキップ
+    while (players[nextPlayerIndex].hasFolded || players[nextPlayerIndex].isAllIn) {
       nextPlayerIndex = (nextPlayerIndex + 1) % players.length;
     }
 
     // ベッティングラウンドが完了したかチェック
     const hasAnyBet = currentBet > 0;
+    // アクション済み判定もALL-IN者は除外
     const allPlayersActed = activePlayers.every(p => p.lastAction !== undefined);
     
     // デバッグ用ログ
@@ -357,7 +386,7 @@ export default function PokerGamePage() {
           } else {
             // 誰かがレイズした場合：最後にレイズした人の手前のプレイヤーまで
             let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
-            while (players[playerBeforeRaiserIndex].hasFolded) {
+            while (players[playerBeforeRaiserIndex].hasFolded || players[playerBeforeRaiserIndex].isAllIn) {
               playerBeforeRaiserIndex = (playerBeforeRaiserIndex - 1 + players.length) % players.length;
             }
             roundComplete = currentPlayerIndex === playerBeforeRaiserIndex && activePlayers.every(p => p.currentBet === currentBet) && allPlayersActed;
@@ -371,7 +400,7 @@ export default function PokerGamePage() {
           const allCalledOrFolded = activePlayers.every(p => p.currentBet === currentBet);
           
           let playerBeforeRaiserIndex = (lastRaiserIndex - 1 + players.length) % players.length;
-          while (players[playerBeforeRaiserIndex].hasFolded) {
+          while (players[playerBeforeRaiserIndex].hasFolded || players[playerBeforeRaiserIndex].isAllIn) {
             playerBeforeRaiserIndex = (playerBeforeRaiserIndex - 1 + players.length) % players.length;
           }
           
@@ -458,45 +487,71 @@ export default function PokerGamePage() {
           ...currentPlayer, 
           hasFolded: true, 
           isTurn: false,
-          lastAction: 'FOLDED'
+          lastAction: 'FOLDED',
+          isAllIn: false
         };
         break;
       case 'check':
         newPlayers[currentPlayerIndex] = {
           ...currentPlayer,
           lastAction: 'CHECK',
+          isAllIn: false
         };
         break;
-      case 'call':
+      case 'call': {
         const callAmount = currentBet - currentPlayer.currentBet;
+        let isAllInNow = callAmount >= currentPlayer.stack;
         newPlayers[currentPlayerIndex] = {
           ...currentPlayer,
           stack: currentPlayer.stack - callAmount,
           currentBet: currentBet,
-          lastAction: `CALL ${currentBet}` // 最終的に支払った総額を表示
+          lastAction: `CALL ${currentBet}`,
+          isAllIn: isAllInNow
         };
         break;
+      }
+      case 'allin': {
+        // ALL-INはコール額が足りない場合のCALLと同じ扱い
+        const callAmount = currentBet - currentPlayer.currentBet;
+        // 既にALL-IN状態なら何もしない
+        if (currentPlayer.isAllIn) return;
+        // 残りスタック全額をベット
+        const allinAmount = currentPlayer.stack;
+        // コール額が足りない場合のみALL-IN
+        let isAllInNow = true;
+        let newBet = currentPlayer.currentBet + allinAmount;
+        newPlayers[currentPlayerIndex] = {
+          ...currentPlayer,
+          stack: 0,
+          currentBet: newBet,
+          lastAction: `ALL-IN ${newBet}`,
+          isAllIn: isAllInNow
+        };
+        // ラウンド進行上はCALLと同じ扱い（レイズ扱いしない）
+        break;
+      }
       case 'bet':
       case 'raise':
         if (amount === undefined) {
             setModalState({ type: 'bet' });
-            return; // モーダル表示のため、ここで処理を中断
+            return;
         }
         const betAmount = amount;
         newCurrentBet = betAmount;
-        newLastRaiserIndex = currentPlayerIndex; // ベット/レイズしたプレイヤーを記録
+        newLastRaiserIndex = currentPlayerIndex;
         newPlayers[currentPlayerIndex] = {
           ...currentPlayer,
           stack: currentPlayer.stack - betAmount,
           currentBet: betAmount,
-          lastAction: action === 'bet' ? `BET ${betAmount}` : `RAISE ${betAmount}`
+          lastAction: action === 'bet' ? `BET ${betAmount}` : `RAISE ${betAmount}`,
+          isAllIn: false
         };
         break;
     }
     setPlayers(newPlayers);
     setCurrentBet(newCurrentBet);
     setLastRaiserIndex(newLastRaiserIndex);
-    setPendingNextTurnIndex(currentPlayerIndex); // ここでフラグをセット
+    setPendingNextTurnIndex(currentPlayerIndex);
   };
 
   const handleSubmitBet = (amount: number) => {
@@ -598,11 +653,13 @@ export default function PokerGamePage() {
         </div>
 
         {positionedPlayers.map(player => {
-          if (player.visualSeatIndex === undefined) return null;
-          const positionClass = SEAT_POSITIONS[player.visualSeatIndex];
+          // フォールドしていても表示（薄いグレーで）
+          const isMainPlayer = player.id === currentUserId;
+          const positionClass = SEAT_POSITIONS[player.visualSeatIndex ?? 0];
+
           return (
-            <div key={player.id} className={`absolute ${positionClass}`}>
-              <PlayerDisplay player={player} isMainPlayer={player.id === currentUserId} />
+            <div key={player.id} className={`absolute ${positionClass} flex flex-col items-center`}>
+              <PlayerDisplay player={player} isMainPlayer={isMainPlayer} />
             </div>
           );
         })}
