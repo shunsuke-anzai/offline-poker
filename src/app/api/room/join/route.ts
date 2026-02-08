@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js"; // ここでSupabaseのサーバーサイドクライアントを初期化
+import { createClient } from "@supabase/supabase-js";
 
 // 環境変数からSupabaseのキーを取得
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -13,67 +13,40 @@ export async function POST(request: Request) {
 
     if (!roomId || !playerName) {
       return NextResponse.json(
-        { message: "Room ID or Player Name is missing." },
+        { message: "ルームIDまたはプレイヤー名がありません。" },
         { status: 400 }
       );
     }
 
-    // まず現在のルーム情報を取得
-    const { data: room, error: fetchError } = await supabaseServer
-      .from("rooms")
-      .select("player_names, max_members, current_members")
-      .eq("id", roomId)
-      .single();
-
-    if (fetchError || !room) {
-      console.error("Error fetching room for join:", fetchError);
-      return NextResponse.json(
-        { message: "Room not found or error fetching room data." },
-        { status: 404 }
-      );
-    }
-
-    // バリデーション
-    if (room.player_names.includes(playerName.trim())) {
-      return NextResponse.json(
-        { message: "Player name already exists in this room." },
-        { status: 409 } // Conflict
-      );
-    }
-    if (room.current_members >= room.max_members) {
-      return NextResponse.json(
-        { message: "Room is full." },
-        { status: 410 } // Gone (Resource no longer available)
-      );
-    }
-
-    // プレイヤー名を追加して更新
-    const updatedPlayerNames = [...room.player_names, playerName.trim()];
-    const { data, error } = await supabaseServer
-      .from("rooms")
-      .update({
-        player_names: updatedPlayerNames,
-        current_members: updatedPlayerNames.length,
-      })
-      .eq("id", roomId)
-      .select(); // 更新されたデータを返す
+    // 作成したPostgreSQL関数を呼び出す
+    const { data, error } = await supabaseServer.rpc("append_player_to_room", {
+      p_room_id: roomId,
+      p_player_name: playerName.trim(),
+    });
 
     if (error) {
-      console.error("Error updating room on server:", error);
+      console.error("RPCエラー:", error);
+      // DB関数からのエラーメッセージをクライアントに返す
       return NextResponse.json(
-        { message: "Failed to join room.", error: error.message },
-        { status: 500 }
+        { message: error.message || "ルームへの参加に失敗しました。" },
+        { status: 400 } // 「満員です」などのエラーは400番台が適切
       );
     }
 
+    // RPCは配列を返すので、最初の要素を取得
+    if (!data || data.length === 0) {
+      throw new Error("ルーム情報の更新に失敗しました。");
+    }
+    const updatedRoom = data[0];
+
     return NextResponse.json(
-      { message: "Successfully joined room.", room: data[0] },
+      { message: "ルームに成功しました。", room: updatedRoom },
       { status: 200 }
     );
-  } catch (error) {
-    console.error("API Error:", error);
+  } catch (error: any) {
+    console.error("APIエラー:", error);
     return NextResponse.json(
-      { message: "Internal Server Error" },
+      { message: error.message || "サーバー内部エラー" },
       { status: 500 }
     );
   }

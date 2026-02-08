@@ -1,57 +1,58 @@
-// app/api/room/create/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js"; // ここでSupabaseのサーバーサイドクライアントを初期化
+import { createClient } from "@supabase/supabase-js";
 
-// 環境変数からSupabaseのキーを取得（サーバーサイドでのみ安全に使用できるキー）
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL; // publicキーは通常クライアント用だが、サーバーでも使える
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // より安全なservice_roleキー
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const supabaseServer = createClient(supabaseUrl!, supabaseServiceRoleKey!);
 
 export async function POST(request: Request) {
   try {
-    const { max_members, stack, bb, keyword, playerName } =
-      await request.json();
+    const { playerName, maxMembers, stack, bb, keyword } = await request.json();
 
-    if (!playerName || !bb || !keyword) {
+    if (!playerName || !maxMembers || !stack || !bb || !keyword) {
       return NextResponse.json(
-        { message: "Missing required fields" },
+        { message: "すべてのフィールドを入力してください。" },
         { status: 400 }
       );
     }
 
-    const initialPlayerNames = [playerName.trim()];
-    const roomData = {
-      max_members: parseInt(max_members, 10),
-      stack: parseInt(stack, 10),
-      bb: parseInt(bb, 10),
-      keyword,
-      current_members: initialPlayerNames.length,
-      status: "waiting",
-      player_names: initialPlayerNames,
-    };
+    
 
-    const { data, error } = await supabaseServer
-      .from("rooms")
-      .insert([roomData])
-      .select();
+    // 新しく作成したRPC関数を呼び出す
+    const { data, error } = await supabaseServer.rpc(
+      "create_room_and_add_host",
+      {
+        p_player_name: playerName,
+        p_max_members: maxMembers,
+        p_stack: stack,
+        p_bb: bb,
+        p_keyword: keyword,
+      }
+    );
 
     if (error) {
-      console.error("Error creating room on server:", error);
+      console.error("RPC create_room_and_add_host error:", error);
       return NextResponse.json(
-        { message: "Failed to create room", error: error.message },
+        { message: error.message || "ルームの作成に失敗しました。" },
         { status: 500 }
       );
     }
 
-    return NextResponse.json(
-      { roomId: data[0].id, playerName: playerName },
-      { status: 201 }
-    );
-  } catch (error) {
+    if (!data || data.length === 0) {
+      return NextResponse.json(
+        { message: "ルームの作成に失敗しました(データなし)。" },
+        { status: 500 }
+      );
+    }
+    // RPCは配列を返すので、最初の要素を取得する
+    const newRoom = data[0];
+
+    return NextResponse.json({ room: newRoom }, { status: 201 });
+  } catch (error: any) {
     console.error("API Error:", error);
     return NextResponse.json(
-      { message: "Internal Server Error" },
+      { message: "サーバー内部エラーです。" },
       { status: 500 }
     );
   }
